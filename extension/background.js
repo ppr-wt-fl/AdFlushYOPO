@@ -1,6 +1,9 @@
-const { getDomain } = require('tldjs');
-// const {parse}=require('meriyah');
-const {parse} = require('acorn-loose')
+// const { getDomain } = require('tldjs');
+// const {parse} = require('acorn-loose')
+// importScripts('acorn-loose.js','tldjs.js');
+import { getDomain } from 'tldjs';
+// const { getDomain } = require('tldjs');
+
 
 let start_rule_num=10;
 let top_level_domain='';
@@ -245,7 +248,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
           dataA.push(features['url_50_std']);
           dataA.push(features['url_6_std']);
           dataA.push(features['num_get_cookie']);
-
+          // console.log(dataA);
           if(localurl in time_dict){
             time_dict[localurl].push(Date.now());
             // addToQueue(localurl, dataA);  
@@ -308,29 +311,49 @@ function featureExtract(url, requestHeader){
           const req_length = 200;
           const url2list2 = url.split('');
           const url2list2len=url2list2.length;
-          const embedding2 = url2list2.reduce(async (sum, char) => {
-            const vec = reqVector[char];
-            if (vec) {
-              return (await sum).map((val, i) => val + vec[i]);
-            }
-            return await sum;
-          }, Promise.resolve(Array(req_length).fill(0)));
+          async function computeEmbedding() {
+            const embedding2 = await url2list2.reduce(async (sum, char) => {
+              const vec = reqVector[char];
+              const currentSum = await sum; // Ensure sum is resolved before using
+              if (vec) {
+                return currentSum.map((val, i) => val + vec[i]);
+              }
+              return currentSum;
+            }, Array(req_length).fill(0));
+          
+            return embedding2;
+          }
+          
+          async function computeSquaredDiffSum(embedding2) {
+            const url_squaredDiffSum = await url2list2.reduce(async (sum, char) => {
+              const vec = reqVector[char];
+              const currentSum = await sum; // Ensure sum is resolved before using
+              if (vec) {
+                return currentSum.map((val, i) => val + Math.pow(vec[i] - embedding2[i], 2));
+              }
+              return currentSum;
+            }, Array(req_length).fill(0));
+          
+            return url_squaredDiffSum;
+          }
+          
+          async function computeMaxVec() {
+            const url_maxVec = await url2list2.reduce(async (currentMax, char) => {
+              const vec = reqVector[char];
+              const currentMaxVec = await currentMax; // Ensure currentMax is resolved before using
+              if (vec) {
+                return currentMaxVec.map((val, i) => Math.max(val, vec[i]));
+              }
+              return currentMaxVec;
+            }, Array(req_length).fill(-Infinity));
+          
+            return url_maxVec;
+          }
 
-          const url_squaredDiffSum = url2list2.reduce(async (sum, char) => {
-            const vec = reqVector[char];
-            if (vec) {
-              return (await sum).map((val, i) => val + Math.pow(vec[i] - embedding2[i], 2));
-            }
-            return await sum;
-          }, Promise.resolve(Array(req_length).fill(0)));
-        
-          const url_maxVec = url2list2.reduce(async (currentMax, char) => {
-            const vec = reqVector[char];
-            if (vec) {
-              return (await currentMax).map((val, i) => Math.max(val, vec[i]));
-            }
-            return await currentMax;
-          }, Promise.resolve(Array(req_length).fill(-Infinity)));
+
+          const embedding2 = await computeEmbedding();
+          const url_squaredDiffSum = await computeSquaredDiffSum(embedding2);
+          const url_maxVec = await computeMaxVec();
 
           const avg2 = (await embedding2).map((val) => val / url2list2len);
           const url_variance = (await url_squaredDiffSum).map((val) => val / url2list2len);

@@ -1,0 +1,50 @@
+{
+  "manifest_version": 2,
+  "name": "AdFlush",
+  "version": "1.0",
+  "icons":{
+    "16":"images/icon16.png",
+    "32":"images/icon32.png",
+    "48":"images/icon48.png",
+    "128":"images/icon128.png"
+  },
+  "description":"The worlds first AI running Anti-Ad & Tracker. Blocks ads and trackers based on AI learned on 83K websites.",
+  "declarative_net_request":{
+    "rule_resources":[
+      {
+      "id": "ruleset_1",
+      "enabled": true,
+      "path":"rules.json"
+      }
+    ]
+  },
+  "permissions": [
+    "webRequest",
+    "declarativeNetRequestWithHostAccess",
+    "activeTab",
+    "webNavigation",
+    "declarativeNetRequestFeedback",
+    "storage",
+    "identity",
+    "tabs",
+    "<all_urls>"
+  ],
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_icon": "images/icon.png"
+  },
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  },
+  "content_security_policy": "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; object-src 'self';",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "addon@adflush.com"
+    }
+  },
+  "web_accessible_resources": [
+      "AdFlush.onnx",
+      "*.wasm"
+  ]
+}
