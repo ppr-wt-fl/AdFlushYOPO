@@ -1,11 +1,14 @@
+import * as ort from "onnxruntime-web";
+
 // document.addEventListener("DOMContentLoaded", ()=>{
-  let ort;
+  // let ort;
   let session;
   (async()=>{
     try{
-      ort=require('onnxruntime-web');
+      // ort=require('onnxruntime-web');
       // chrome.runtime.sendMessage({action:"madeModel",input:String(ort)})
-      session = await ort.InferenceSession.create('./AdFlush.onnx');
+      const modelUrl = chrome.runtime.getURL('AdFlush.onnx');
+      session = await ort.InferenceSession.create(modelUrl);
       
       chrome.runtime.sendMessage({action:'madeModel', input:session.inputNames});  
     }
