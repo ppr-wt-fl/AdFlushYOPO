@@ -1,0 +1,13 @@
+{
+  "name": "adflush-nas-tfjs-validate",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Round-trip validation (predict parity + one fit() step) for the tf.js model exported by train_archai.py",
+  "main": "validate.js",
+  "scripts": {
+    "validate": "node validate.js"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "^4.22.0"
+  }
+}
