@@ -42,14 +42,13 @@ COPY ./source/autokeras/requirements_autokeras.txt requirements_autokeras.txt
 RUN python3 -m pip install --no-cache-dir --upgrade pip && \
     python3 -m pip install --no-cache-dir -r requirements_autokeras.txt
 
-COPY source/autokeras/train_autokeras.py source/train_autokeras.py
+COPY dataset/AdFlush_train_sample.csv dataset/AdFlush_train_sample.csv
+COPY dataset/AdFlush_test_sample.csv dataset/AdFlush_test_sample.csv
+
 COPY source/tfjs_validate source/tfjs_validate
 RUN cd source/tfjs_validate && npm install
 
-# Only the small stratified sample CSVs -- NOT the full multi-hundred-MB
-# AdFlush_train.csv/AdFlush_test.csv.
-COPY dataset/AdFlush_train_sample.csv dataset/AdFlush_train_sample.csv
-COPY dataset/AdFlush_test_sample.csv dataset/AdFlush_test_sample.csv
+COPY source/autokeras/train_autokeras.py source/train_autokeras.py
 
 RUN mkdir -p model output
 
