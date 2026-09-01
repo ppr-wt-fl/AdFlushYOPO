@@ -16,6 +16,7 @@ import json
 import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,15 @@ import pandas as pd
 import tensorflow as tf
 import tensorflowjs as tfjs
 import autokeras as ak
+from sklearn.metrics import (
+    confusion_matrix,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+    roc_curve,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("train_autokeras")
@@ -33,15 +43,27 @@ DATADIR = REPO_DIR / "dataset"
 MODELDIR = REPO_DIR / "model"
 OUTDIR = REPO_DIR / "output"
 
-TRAINSET = DATADIR / "AdFlush_train_sample.csv"
-TESTSET = DATADIR / "AdFlush_test_sample.csv"
+TRAINSET = DATADIR / "AdFlush_train.csv"
+TESTSET = DATADIR / "AdFlush_test.csv"
 
 SEED = 42
-VALIDATION_SAMPLE_SIZE = 256
+VALIDATION_SAMPLE_SIZE = 1024
 
-# Feasibility check, not a real search: keep this small.
-MAX_TRIALS = 3
-SEARCH_EPOCHS = 8
+# ---------------------------------------------------------------------------
+# Full in-depth search. AutoKeras has no wall-clock budget knob, so the
+# ~9-10 day ceiling is bounded by MAX_TRIALS * (worst-case per-trial time):
+#
+#   * SEARCH_EPOCHS hard-caps each trial; the stock Keras EarlyStopping
+#     (val_loss, passed to clf.fit below, restore_best_weights) ends most
+#     trials earlier. Worst case per trial = SEARCH_EPOCHS full epochs.
+#   * On the full train set (~664k rows) one epoch of a small dense model
+#     is roughly 10-40 s on a GPU, so a trial is <= ~15-40 min and
+#     400 trials <= ~5-10 days. If the logs show trials are much
+#     faster/slower, raise/lower MAX_TRIALS -- it is the one knob to turn.
+# ---------------------------------------------------------------------------
+MAX_TRIALS = 700
+# SEARCH_EPOCHS = 60
+# EARLY_STOPPING_PATIENCE = 8
 
 
 def load_dataset(path):
@@ -54,63 +76,89 @@ def load_dataset(path):
 
 
 def replace_normalization_with_rescaling(model):
-
-    replaced = False
-    new_layers_by_old_name = {}
+    """Rebuild the AutoKeras export, swapping the preprocessing layers that
+    tfjs-layers can't load. The exported StructuredDataClassifier model is a
+    plain linear stack, so we just re-apply each layer in order.
+    """
+    eps = tf.keras.backend.epsilon()  # 1e-7; matches Normalization.call()'s own clamp exactly.
     inputs = model.inputs
-    tensor_map = {}
-    for inp in inputs:
-        tensor_map[inp.ref()] = inp
-
-    def get_input_tensors(layer):
-        node = layer._inbound_nodes[0]
-        in_tensors = node.input_tensors
-        if not isinstance(in_tensors, list):
-            in_tensors = [in_tensors]
-        return [tensor_map[t.ref()] for t in in_tensors]
-
-    keras_epsilon = tf.keras.backend.epsilon()  # default 1e-7; matches Normalization.call()'s own clamp exactly.
+    x = inputs[0]
+    replaced = False
 
     for layer in model.layers:
         if isinstance(layer, tf.keras.layers.InputLayer):
             continue
-        in_tensors = get_input_tensors(layer)
-        call_arg = in_tensors[0] if len(in_tensors) == 1 else in_tensors
 
         if isinstance(layer, tf.keras.layers.Normalization):
             replaced = True
-            weights = layer.get_weights()
-            # tf.keras Normalization stores [mean, variance, count].
-            mean, variance = weights[0], weights[1]
-            # Exact match to Normalization.call(): (x - mean) / max(sqrt(variance), epsilon).
-            std_safe = np.maximum(np.sqrt(variance), keras_epsilon)
-            scale = (1.0 / std_safe).astype("float32").reshape(-1)
-            offset = (-mean / std_safe).astype("float32").reshape(-1)
+            # Normalization stores [mean, variance, count]; call() computes
+            # (x - mean) / max(sqrt(variance), epsilon), which is exactly a Rescaling.
+            mean, variance = layer.get_weights()[:2]
+            std_safe = np.maximum(np.sqrt(variance), eps)
             new_layer = tf.keras.layers.Rescaling(
-                scale=scale.tolist(), offset=offset.tolist(), name=layer.name + "_rescaling"
+                scale=(1.0 / std_safe).astype("float32").reshape(-1).tolist(),
+                offset=(-mean / std_safe).astype("float32").reshape(-1).tolist(),
+                name=layer.name + "_rescaling",
             )
-            out = new_layer(call_arg)
-            logger.info(f"  Replaced Normalization layer '{layer.name}' with Rescaling '{new_layer.name}'")
+            x = new_layer(x)
+            logger.info(f"  Replaced Normalization '{layer.name}' with Rescaling '{new_layer.name}'")
         elif type(layer).__name__ == "MultiCategoryEncoding":
             replaced = True
-            # Not a linear op -- there's no faithful drop-in tfjs-layers
-            # replacement for an arbitrary learned lookup table. Only safe
-            # to drop because every column was declared "numerical" (see
-            # main()), which the identity check right after this loop
-            # confirms actually made it a pass-through on real data.
-            out = call_arg
+            # Not a linear op, so no faithful tfjs-layers replacement. Safe to
+            # drop only because every column is declared "numerical" (see main()),
+            # making it a pass-through -- the identity check after this confirms it.
             logger.info(f"  Dropped MultiCategoryEncoding layer '{layer.name}' (asserted no-op below)")
         else:
-            out = layer(call_arg)
+            x = layer(x)
 
-        out_tensor = out if not isinstance(out, list) else out[0]
-        old_out = layer.output if not isinstance(layer.output, list) else layer.output[0]
-        tensor_map[old_out.ref()] = out_tensor
-
-    old_outputs = model.outputs
-    new_outputs = [tensor_map[t.ref()] for t in old_outputs]
-    new_model = tf.keras.Model(inputs=inputs, outputs=new_outputs, name=model.name + "_tfjs_safe")
+    new_model = tf.keras.Model(inputs=inputs, outputs=x, name=model.name + "_tfjs_safe")
     return new_model, replaced
+
+
+def metrics(true, pred, _is_mutated=False):
+    """Same performance stats source/main.py's metrics() prints for the
+    ONNX / MOJO models, so the AutoKeras model is reported the same way.
+    """
+    true = np.asarray(true).astype(int)
+    pred = np.asarray(pred).astype(int)
+
+    print(f"Accuracy : {accuracy_score(true, pred)} ")
+    print(f"Precision : {precision_score(true, pred)} ")
+    print(f"Recall : {recall_score(true, pred)} ")
+    print(f"F1 : {f1_score(true, pred)} ")
+
+    # Number of attacks
+    total_attacks = len(true)
+    # Number of successful attacks (misclassifications)
+    successful_attacks = sum(true != pred)
+    tn, fp, fn, tp = confusion_matrix(true, pred).ravel()
+
+    # Calculate FNR
+    fnr = fn / (tp + fn)
+    print('False Negative Rate:', fnr)
+
+    # Calculate FPR
+    fpr = fp / (fp + tn)
+    print('False Positive Rate:', fpr)
+
+    print("AUROC: ", roc_auc_score(true, pred))
+    fprlist, tprlist, thresholds = roc_curve(true, pred)
+    cutoff = np.argmax(tprlist - fprlist)
+    print("TPR ", tprlist[cutoff], "at FPR ", fprlist[cutoff])
+
+    # ASR
+    if _is_mutated:
+        asr = successful_attacks / total_attacks
+        print("Attack Success Rate: ", asr)
+
+
+def evaluate_model(model, X, y):
+    logger.info("Evaluating model on the test set (same stats as source/main.py) ...")
+    start_time = time.time()
+    prob = np.asarray(model.predict(X, batch_size=512, verbose=0)).reshape(-1)
+    print("Inference time elapsed: ", time.time() - start_time, "seconds for ", len(y), " samples.")
+    pred = (prob >= 0.5).astype(int)
+    metrics(y, pred, _is_mutated=False)
 
 
 def run_tfjs_validation(model_json_path, payload_path):
@@ -145,14 +193,7 @@ def main():
 
 
     tf.keras.utils.set_random_seed(SEED)
-    keras_version = getattr(tf.keras, "__version__", None)
-    if keras_version is None:
-        try:
-            import keras as _keras_pkg
-            keras_version = _keras_pkg.__version__
-        except Exception:
-            keras_version = "unknown"
-    logger.info(f"TensorFlow {tf.__version__}, tf.keras {keras_version}")
+    logger.info(f"TensorFlow {tf.__version__}, tf.keras {getattr(tf.keras, '__version__', 'unknown')}")
     logger.info(f"GPUs visible: {tf.config.list_physical_devices('GPU')}")
     logger.info(f"AutoKeras {ak.__version__}")
 
@@ -165,7 +206,7 @@ def main():
 
     ak_dir = OUTDIR / "autokeras_search"
     clf = ak.StructuredDataClassifier(
-        max_trials=MAX_TRIALS,    # Push this as high as you can (default is 100)
+        max_trials=MAX_TRIALS,
         tuner="bayesian",   # Switches from the default task-specific tuner to Bayesian Optimization
         overwrite=True,
         directory=str(ak_dir),
@@ -174,13 +215,33 @@ def main():
         column_names=feature_columns,
         column_types=column_types,
     )
-    logger.info(f"Running StructuredDataClassifier.fit (max_trials={MAX_TRIALS}, epochs={SEARCH_EPOCHS}, all columns forced 'numerical') ...")
+
+    logger.info(
+        f"Running StructuredDataClassifier.fit (max_trials={MAX_TRIALS}, "
+        f"per-trial epoch cap={SEARCH_EPOCHS}, {len(X_train)} rows, "
+        f"all columns forced 'numerical') ..."
+    )
     X_train_df = pd.DataFrame(X_train, columns=feature_columns)
-    clf.fit(X_train_df, y_train, epochs=SEARCH_EPOCHS,  verbose=2)
+
+    # early_stopping = tf.keras.callbacks.EarlyStopping(
+    #     monitor="val_loss", patience=EARLY_STOPPING_PATIENCE, restore_best_weights=True
+    # )
+
+    clf.fit(
+        X_train_df,
+        y_train, 
+        # epochs=SEARCH_EPOCHS,
+        # callbacks=[early_stopping],
+        verbose=2,
+    )
 
     model = clf.export_model()
     logger.info(f"Exported model type: {type(model)}")
+
     model.summary(print_fn=logger.info)
+
+    evaluate_model(model, X_test, y_test)
+
     logger.info("Layer types found in the AutoKeras-exported model:")
     for layer in model.layers:
         logger.info(f"  {layer.name}: {type(layer).__module__}.{type(layer).__name__}")

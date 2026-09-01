@@ -8,6 +8,6 @@
     "validate": "node validate.js"
   },
   "dependencies": {
-    "@tensorflow/tfjs-node": "^4.22.0"
+    "@tensorflow/tfjs-node": "4.22.0"
   }
 }
