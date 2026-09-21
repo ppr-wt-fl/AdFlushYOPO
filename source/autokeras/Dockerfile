@@ -16,7 +16,10 @@
 #   node      pinned Node.js toolchain      -> keyed on NODE_VERSION only
 #   npm-deps  tfjs-node + native binary     -> keyed on package.json only
 #   py-deps   AutoKeras / TF / tfjs stack   -> keyed on requirements_autokeras.txt only
-#   runtime   FROM py-deps; COPY node + node_modules in; then dataset, then code
+#   runtime   FROM py-deps; COPY node + node_modules in; then code
+#
+# The dataset is NOT baked into the image -- it's bind-mounted at `docker
+# run` time, same as model/ and output/ below.
 #
 # Under BuildKit the node/npm-deps and py-deps chains build in parallel.
 # On a rebuild:
@@ -26,7 +29,7 @@
 #   * bump NODE_VERSION        -> only node/npm-deps re-run
 # The repo-root .dockerignore is large; source/autokeras/Dockerfile.dockerignore
 # overrides it for this build (BuildKit) to an allowlist of just the files
-# below, so the build context is a few hundred MB, not ~2 GB.
+# below, so the build context is small and never includes the dataset.
 #
 # ---------------------------------------------------------------------------
 # Reproducibility
@@ -59,9 +62,11 @@
 # Build (from the REPO ROOT; needs BuildKit, the default in modern Docker):
 #   docker build -f source/autokeras/Dockerfile -t adflush-autokeras .
 #
-# Run (full dataset baked in; model/ + output/ bind-mounted so results land
-# on the host). Deep search -- budget ~9-10 days:
+# Run (dataset/ + model/ + output/ bind-mounted so results land on the host
+# and the image doesn't need rebuilding when the dataset changes). Deep
+# search -- budget ~9-10 days:
 #   docker run --rm --gpus all \
+#     -v "$(pwd)/dataset:/adflush/dataset" \
 #     -v "$(pwd)/source/autokeras/model:/adflush/model" \
 #     -v "$(pwd)/source/autokeras/output:/adflush/output" \
 #     adflush-autokeras
@@ -138,12 +143,11 @@ WORKDIR /adflush
 COPY --from=npm-deps /build/tfjs_validate/node_modules source/tfjs_validate/node_modules
 COPY source/tfjs_validate/package.json source/tfjs_validate/validate.js source/tfjs_validate/
 
-# Dataset (large, stable) before app code (small, edited often) so a code
-# edit never re-copies the CSVs.
-COPY dataset/AdFlush_train.csv dataset/AdFlush_test.csv dataset/
 COPY source/autokeras/train_autokeras.py source/train_autokeras.py
 
-RUN mkdir -p model output
+# dataset/ is bind-mounted at `docker run` time (see below), not baked into
+# the image -- just create the mount point.
+RUN mkdir -p dataset model output
 
 WORKDIR /adflush/source
 ENTRYPOINT ["python3", "train_autokeras.py"]
