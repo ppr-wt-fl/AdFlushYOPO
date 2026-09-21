@@ -1,17 +1,3 @@
-"""
-- tf.keras.regularizers.L2 serializes as class name "L2", which tfjs-layers' deserializer doesn't recognize. 
-
-- AutoKeras's default StructuredDataBlock normalizes numeric columns with a tf.keras.layers.Normalization (adapt-based) preprocessing layer baked into
-the exported model graph. -> tfjs.loadLayersModel() fails on
-    - tfjs-layers (checked against the @tensorflow/tfjs-layers v4.22.0 source: no `Normalization` class exists in tfjs-layers/src/layers/normalization.ts only has BatchNormalization and LayerNormalization;
-    - nothing under layers/preprocessing/ covers it either) does not implement that layer
- 
- tf.keras.layers.Normalization layer swapped for a tf.keras.layers.Rescaling built from the Normalization
-layer's own adapted mean/variance (mathematically identical)
-
-- Every other layer instance (with its trained weights) is reused unchanged.
-"""
-
 import json
 import logging
 import subprocess
@@ -38,10 +24,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("train_autokeras")
 
 SOURCE_DIR = Path(__file__).resolve().parent
-REPO_DIR = SOURCE_DIR.parent
+PARENT_SOURCE_DIR = SOURCE_DIR.parent
+REPO_DIR = PARENT_SOURCE_DIR.parent
 DATADIR = REPO_DIR / "dataset"
-MODELDIR = REPO_DIR / "model"
-OUTDIR = REPO_DIR / "output"
+MODELDIR = SOURCE_DIR / "model"
+OUTDIR = SOURCE_DIR / "output"
+TFJS_VALIDATE_DIR = PARENT_SOURCE_DIR / "tfjs_validate"
 
 TRAINSET = DATADIR / "AdFlush_train.csv"
 TESTSET = DATADIR / "AdFlush_test.csv"
@@ -49,18 +37,6 @@ TESTSET = DATADIR / "AdFlush_test.csv"
 SEED = 42
 VALIDATION_SAMPLE_SIZE = 1024
 
-# ---------------------------------------------------------------------------
-# Full in-depth search. AutoKeras has no wall-clock budget knob, so the
-# ~9-10 day ceiling is bounded by MAX_TRIALS * (worst-case per-trial time):
-#
-#   * SEARCH_EPOCHS hard-caps each trial; the stock Keras EarlyStopping
-#     (val_loss, passed to clf.fit below, restore_best_weights) ends most
-#     trials earlier. Worst case per trial = SEARCH_EPOCHS full epochs.
-#   * On the full train set (~664k rows) one epoch of a small dense model
-#     is roughly 10-40 s on a GPU, so a trial is <= ~15-40 min and
-#     400 trials <= ~5-10 days. If the logs show trials are much
-#     faster/slower, raise/lower MAX_TRIALS -- it is the one knob to turn.
-# ---------------------------------------------------------------------------
 MAX_TRIALS = 700
 # SEARCH_EPOCHS = 60
 # EARLY_STOPPING_PATIENCE = 8
@@ -162,8 +138,8 @@ def evaluate_model(model, X, y):
 
 
 def run_tfjs_validation(model_json_path, payload_path):
-    validate_js = SOURCE_DIR / "tfjs_validate" / "validate.js"
-    node_modules = SOURCE_DIR / "tfjs_validate" / "node_modules"
+    validate_js = TFJS_VALIDATE_DIR / "validate.js"
+    node_modules = TFJS_VALIDATE_DIR / "node_modules"
     if not node_modules.exists():
         raise RuntimeError(f"{node_modules} not found. Run `npm install` in {validate_js.parent} first.")
     logger.info("Validating exported tf.js model with a real tfjs-node round-trip (predict + one fit step) ...")
@@ -218,7 +194,7 @@ def main():
 
     logger.info(
         f"Running StructuredDataClassifier.fit (max_trials={MAX_TRIALS}, "
-        f"per-trial epoch cap={SEARCH_EPOCHS}, {len(X_train)} rows, "
+        f"no per-trial epoch cap, {len(X_train)} rows, "
         f"all columns forced 'numerical') ..."
     )
     X_train_df = pd.DataFrame(X_train, columns=feature_columns)
