@@ -36,9 +36,12 @@ TESTSET = DATADIR / "AdFlush_test.csv"
 SEED = 42
 VALIDATION_SAMPLE_SIZE = 1024
 
-MAX_TRIALS = 700
-# SEARCH_EPOCHS = 60
-# EARLY_STOPPING_PATIENCE = 8
+MAX_TRIALS = 500
+EPOCHS = 200
+BATCH_SIZE=2048
+# how long to wait before early stopping (no improvement on validation loss)
+PATIENCE=10
+PATIENCE_MIN_DELTA=1e-4
 
 
 def load_dataset(path):
@@ -193,20 +196,21 @@ def main():
 
     logger.info(
         f"Running StructuredDataClassifier.fit (max_trials={MAX_TRIALS}, "
-        f"no per-trial epoch cap, {len(X_train)} rows, "
+        f"epochs capped at {EPOCHS} per trial, {len(X_train)} rows, "
         f"all columns forced 'numerical') ..."
     )
     X_train_df = pd.DataFrame(X_train, columns=feature_columns)
 
-    # early_stopping = tf.keras.callbacks.EarlyStopping(
-    #     monitor="val_loss", patience=EARLY_STOPPING_PATIENCE, restore_best_weights=True
-    # )
+    early_stopping = tf.keras.callbacks.EarlyStopping(
+        patience=PATIENCE, min_delta=PATIENCE_MIN_DELTA, restore_best_weights=True
+    )
 
     clf.fit(
         X_train_df,
-        y_train, 
-        # epochs=SEARCH_EPOCHS,
-        # callbacks=[early_stopping],
+        y_train,
+        epochs=EPOCHS,
+        callbacks=[early_stopping],
+        batch_size=BATCH_SIZE,
         verbose=2,
     )
 
