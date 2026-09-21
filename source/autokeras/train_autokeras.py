@@ -24,12 +24,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("train_autokeras")
 
 SOURCE_DIR = Path(__file__).resolve().parent
-PARENT_SOURCE_DIR = SOURCE_DIR.parent
-REPO_DIR = PARENT_SOURCE_DIR.parent
+REPO_DIR = SOURCE_DIR.parent
 DATADIR = REPO_DIR / "dataset"
-MODELDIR = SOURCE_DIR / "model"
-OUTDIR = SOURCE_DIR / "output"
-TFJS_VALIDATE_DIR = PARENT_SOURCE_DIR / "tfjs_validate"
+MODELDIR = REPO_DIR / "model"
+OUTDIR = REPO_DIR / "output"
+TFJS_VALIDATE_DIR = SOURCE_DIR / "tfjs_validate"
 
 TRAINSET = DATADIR / "AdFlush_train.csv"
 TESTSET = DATADIR / "AdFlush_test.csv"
