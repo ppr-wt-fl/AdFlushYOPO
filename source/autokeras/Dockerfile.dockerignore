@@ -2,8 +2,8 @@
 #   docker build -f source/autokeras/Dockerfile .
 # (requires BuildKit / `docker buildx`, the default in modern Docker).
 #
-# The repo root holds ~2 GB of CSVs this image never uses (all_df_883_*,
-# JS_obfuscated_*, GAN_mutated_*, the *_sample.csv files) plus the browser
+# The repo root holds ~2 GB of CSVs (dataset/ included -- it's bind-mounted
+# at `docker run` time, not copied into the image) plus the browser
 # extensions, assets, and the rest of source/. Allowlist just what the
 # Dockerfile COPYs so the build context stays small.
 
@@ -11,8 +11,6 @@
 **
 
 # ...then re-include exactly what the Dockerfile needs
-!dataset/AdFlush_train.csv
-!dataset/AdFlush_test.csv
 !source/autokeras/requirements_autokeras.txt
 !source/autokeras/train_autokeras.py
 !source/tfjs_validate/package.json
