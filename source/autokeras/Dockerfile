@@ -1,70 +1,8 @@
-# syntax=docker/dockerfile:1
-#
-# Dockerfile for source/autokeras/train_autokeras.py -- an AutoKeras
-# StructuredDataClassifier search for AdFlush, exported to a tf.js
-# LayersModel that can keep training in the browser. AutoML alternative to
-# source/train_optuna.py's Optuna pipeline.
-#
-# GPU base image: bundles a CUDA/cuDNN runtime matched to TensorFlow 2.15,
-# so this assumes an NVIDIA driver + the NVIDIA Container Toolkit on the
-# host (`--gpus all` at `docker run` time). Runs CPU-only too, but the full
-# search below is far too slow for that in practice.
-#
 # ---------------------------------------------------------------------------
-# Build layout -- multi-stage, ordered so a code edit rebuilds ~nothing
-# ---------------------------------------------------------------------------
-#   node      pinned Node.js toolchain      -> keyed on NODE_VERSION only
-#   npm-deps  tfjs-node + native binary     -> keyed on package.json only
-#   py-deps   AutoKeras / TF / tfjs stack   -> keyed on requirements_autokeras.txt only
-#   runtime   FROM py-deps; COPY node + node_modules in; then code
-#
-# The dataset is NOT baked into the image -- it's bind-mounted at `docker
-# run` time, same as model/ and output/ below.
-#
-# Under BuildKit the node/npm-deps and py-deps chains build in parallel.
-# On a rebuild:
-#   * edit train_autokeras.py  -> only the final ~1 KB COPY re-runs
-#   * edit tfjs_validate/validate.js -> only its COPY re-runs (npm install cached)
-#   * edit requirements        -> only py-deps (+ runtime assembly) re-runs
-#   * bump NODE_VERSION        -> only node/npm-deps re-run
-# The repo-root .dockerignore is large; source/autokeras/Dockerfile.dockerignore
-# overrides it for this build (BuildKit) to an allowlist of just the files
-# below, so the build context is small and never includes the dataset.
-#
-# ---------------------------------------------------------------------------
-# Reproducibility
-# ---------------------------------------------------------------------------
-# Everything external is pinned to an exact, content-addressed version:
-#   * base image      -> pinned by sha256 digest (not just the :2.15.0-gpu tag)
-#   * Python packages -> every direct dep pinned to == in requirements_autokeras.txt
-#   * pip/setuptools/wheel -> pinned versions
-#   * Node.js         -> exact release tarball from nodejs.org, sha256-verified
-#                        (NOT the NodeSource apt repo, whose versions rotate)
-#   * npm packages    -> @tensorflow/tfjs-node pinned to == in package.json
-#
-# Still floating (lock further if you need bit-identical rebuilds):
-#   * apt packages (curl/ca-certificates/xz-utils) from the Ubuntu archive at
-#     build time -- pin with `pkg=version` + snapshot.ubuntu.com if required
-#   * transitive Python deps -- generate a hash lock from the first good build
-#     (`pip freeze > requirements_autokeras.lock` in the py-deps stage) and
-#     install that instead
-#   * transitive npm deps -- run `npm install` once, commit the generated
-#     source/tfjs_validate/package-lock.json, then switch the `npm install`
-#     in the npm-deps stage to `npm ci`
-#
-# Bit-exact *training* results on GPU are separate: the script seeds
-# everything (tf.keras.utils.set_random_seed), but full determinism also
-# needs TF_DETERMINISTIC_OPS=1 / TF_CUDNN_DETERMINISTIC=1 (set them at
-# `docker run` time). Left unset here because a missing deterministic op
-# kernel raises, which would be a bad way to lose a multi-day run.
-#
-# ---------------------------------------------------------------------------
-# Build (from the REPO ROOT; needs BuildKit, the default in modern Docker):
+# Build from the REPO ROOT:
 #   docker build -f source/autokeras/Dockerfile -t adflush-autokeras .
 #
-# Run (dataset/ + model/ + output/ bind-mounted so results land on the host
-# and the image doesn't need rebuilding when the dataset changes). Deep
-# search -- budget ~9-10 days:
+# Run (dataset/ + model/ + output/ bind-mounted -> results land on host
 #   docker run --rm --gpus all \
 #     -v "$(pwd)/dataset:/adflush/dataset" \
 #     -v "$(pwd)/source/autokeras/model:/adflush/model" \
@@ -74,10 +12,7 @@
 
 ARG BASE_IMAGE=tensorflow/tensorflow:2.15.0-gpu@sha256:66b44c162783bb92ab6f44c1b38bcdfef70af20937089deb7bc20a4f3d7e5491
 
-# ===========================================================================
-# Stage: node -- pinned Node.js toolchain, sha256-verified. Independent of
-# every Python dep and every line of app code; rebuilds only on NODE_VERSION.
-# ===========================================================================
+#pinned Node.js 
 FROM ${BASE_IMAGE} AS node
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -96,21 +31,13 @@ RUN apt-get update && \
     /opt/node/bin/node --version
 ENV PATH=/opt/node/bin:$PATH
 
-# ===========================================================================
-# Stage: npm-deps -- @tensorflow/tfjs-node and its prebuilt native binary.
-# Only package.json is copied, so editing validate.js does NOT bust this.
-# ===========================================================================
+# npm-deps 
 FROM node AS npm-deps
-
 WORKDIR /build/tfjs_validate
 COPY source/tfjs_validate/package.json ./
 RUN npm install --no-audit --no-fund --loglevel=error
 
-# ===========================================================================
-# Stage: py-deps -- the AutoKeras / TensorFlow 2.15 / tfjs Python stack.
-# Rebuilds only when requirements_autokeras.txt changes. Builds in parallel
-# with node/npm-deps under BuildKit.
-# ===========================================================================
+# python deps
 FROM ${BASE_IMAGE} AS py-deps
 
 ENV PIP_NO_CACHE_DIR=1 \
@@ -121,10 +48,7 @@ RUN python3 -m pip install --no-cache-dir \
         "pip==24.3.1" "setuptools==75.6.0" "wheel==0.45.1" && \
     python3 -m pip install --no-cache-dir -r /tmp/requirements_autokeras.txt
 
-# ===========================================================================
-# Stage: runtime -- inherit the Python deps layer, pull in the Node runtime
-# and node_modules by copy, then add data and code (small, last, cache-cheap).
-# ===========================================================================
+# runtime
 FROM py-deps AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
@@ -133,8 +57,8 @@ ENV PYTHONUNBUFFERED=1 \
     LANG=C.UTF-8 \
     TZ=UTC
 
-# validate.js is run as `node validate.js`; npm is not needed at run time,
-# so only the self-contained node binary is copied.
+# note, might be too overkill
+# validate.js is run as `node validate.js` -> we just need node
 COPY --from=node /opt/node/bin/node /usr/local/bin/node
 
 WORKDIR /adflush
@@ -145,8 +69,6 @@ COPY source/tfjs_validate/package.json source/tfjs_validate/validate.js source/t
 
 COPY source/autokeras/train_autokeras.py source/train_autokeras.py
 
-# dataset/ is bind-mounted at `docker run` time (see below), not baked into
-# the image -- just create the mount point.
 RUN mkdir -p dataset model output
 
 WORKDIR /adflush/source
