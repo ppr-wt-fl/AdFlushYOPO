@@ -11,6 +11,7 @@ import pandas as pd
 import tensorflow as tf
 import tensorflowjs as tfjs
 import autokeras as ak
+import keras_tuner as kt
 from sklearn.metrics import (
     confusion_matrix,
     accuracy_score,
@@ -37,11 +38,44 @@ TESTSET = DATADIR / "AdFlush_test.csv"
 SEED = 42
 VALIDATION_SAMPLE_SIZE = 1024
 
-MAX_TRIALS = 500
-EPOCHS = 200
-BATCH_SIZE=2048
-# how long to wait before early stopping (no improvement on validation loss)
-PATIENCE=10
+MAX_TRIALS = 400
+# Train each trial twice and average: the same config's score varies by ~0.004
+# from weight init alone, enough to decide which config "wins".
+EXECUTIONS_PER_TRIAL = 2
+BATCH_SIZE=1024
+# Search space. Worst case is 32 x 4096-unit layers + BatchNorm ~= 521M params (~2.1 GB).
+# Capped here instead of with max_model_size: an oversized model counts as a
+# failed trial, and 3 failures in a row abort the whole search.
+MAX_LAYERS = 32
+UNITS = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
+DROPOUT = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
+LEARNING_RATES = [1e-2, 1e-3, 1e-4]
+# First trials of the greedy search: the best config of the earlier
+# StructuredDataClassifier run, plus a deeper one (greedy rarely changes depth).
+INITIAL_HPS = [
+    {
+        "dense_block_1/use_batchnorm": True,
+        "dense_block_1/num_layers": 3,
+        "dense_block_1/units_0": 128,
+        "dense_block_1/units_1": 1024,
+        "dense_block_1/units_2": 16,
+        "dense_block_1/dropout": 0.0,
+        "classification_head_1/dropout": 0.0,
+        "optimizer": "adam",
+        "learning_rate": 1e-3,
+    },
+    {
+        "dense_block_1/use_batchnorm": True,
+        "dense_block_1/num_layers": 6,
+        **{f"dense_block_1/units_{i}": 256 for i in range(6)},
+        "dense_block_1/dropout": 0.0,
+        "classification_head_1/dropout": 0.0,
+        "optimizer": "adam",
+        "learning_rate": 1e-3,
+    },
+]
+# how long to wait before early stopping (no improvement on validation AUC)
+PATIENCE=20
 PATIENCE_MIN_DELTA=1e-4
 
 
@@ -55,10 +89,8 @@ def load_dataset(path):
 
 
 def replace_normalization_with_rescaling(model):
-    """Rebuild the AutoKeras export, swapping the preprocessing layers that
-    tfjs-layers can't load. The exported StructuredDataClassifier model is a
-    plain linear stack, so we just re-apply each layer in order.
-    """
+    """Swap/drop the layers that tfjs-layers can't load"""
+
     eps = tf.keras.backend.epsilon()  # 1e-7; matches Normalization.call()'s own clamp exactly.
     inputs = model.inputs
     x = inputs[0]
@@ -81,12 +113,11 @@ def replace_normalization_with_rescaling(model):
             )
             x = new_layer(x)
             logger.info(f"  Replaced Normalization '{layer.name}' with Rescaling '{new_layer.name}'")
-        elif type(layer).__name__ == "MultiCategoryEncoding":
+        elif type(layer).__name__ == "CastToFloat32":
             replaced = True
-            # Not a linear op, so no faithful tfjs-layers replacement. Safe to
-            # drop only because every column is declared "numerical" (see main()),
-            # making it a pass-through -- the identity check after this confirms it.
-            logger.info(f"  Dropped MultiCategoryEncoding layer '{layer.name}' (asserted no-op below)")
+            # Added by ak.Input; tfjs-layers doesn't know it. A no-op for our
+            # float32 inputs -- the identity check after this confirms it.
+            logger.info(f"  Dropped CastToFloat32 layer '{layer.name}' (asserted no-op below)")
         else:
             x = layer(x)
 
@@ -172,7 +203,12 @@ def main():
             {
                 "seed": SEED,
                 "max_trials": MAX_TRIALS,
-                "epochs": EPOCHS,
+                "executions_per_trial": EXECUTIONS_PER_TRIAL,
+                "max_layers": MAX_LAYERS,
+                "units": UNITS,
+                "dropout": DROPOUT,
+                "learning_rates": LEARNING_RATES,
+                "initial_hps": INITIAL_HPS,
                 "batch_size": BATCH_SIZE,
                 "patience": PATIENCE,
                 "patience_min_delta": PATIENCE_MIN_DELTA,
@@ -197,40 +233,53 @@ def main():
     logger.info(f"GPUs visible: {tf.config.list_physical_devices('GPU')}")
     logger.info(f"AutoKeras {ak.__version__}")
 
-    # Categorical layers (e.g. is_third_party, num_get_storage -- are 0/1/2-valued)
-    # -> autokeras.keras_layers.MultiCategoryEncoding preprocessing layer
-    # -> not supported by tfjs-layets
-    # -> no clean replacement
-    # == force everything to be numerical
-    column_types = {c: "numerical" for c in feature_columns}
+    inputs = ak.Input()
+    x = ak.Normalization()(inputs)  # like H2O's standardize=True
+    x = ak.DenseBlock(
+        num_layers=kt.engine.hyperparameters.Int("num_layers", 1, MAX_LAYERS),
+        num_units=kt.engine.hyperparameters.Choice("num_units", UNITS),
+        dropout=kt.engine.hyperparameters.Choice("dropout", DROPOUT),
+    )(x)
+
+    strategy = tf.distribute.MirroredStrategy()
+    with strategy.scope():
+        auc = tf.keras.metrics.AUC(name="auc")
+    outputs = ak.ClassificationHead(metrics=["accuracy", auc])(x)
+
+    # Pre-registered hps override the ones AutoKeras declares with the same name.
+    # Only adam: with no epochs given, AutoKeras's adam_weight_decay schedule
+    # decays the learning rate to 0 after one epoch.
+    hp = kt.HyperParameters()
+    hp.Fixed("optimizer", "adam")
+    hp.Choice("learning_rate", LEARNING_RATES, default=1e-3)
 
     ak_dir = RUN_DIR / "autokeras_search"
-    clf = ak.StructuredDataClassifier(
+    clf = ak.AutoModel(
+        inputs=inputs,
+        outputs=outputs,
         max_trials=MAX_TRIALS,
-        tuner="bayesian",   # Switches from the default task-specific tuner to Bayesian Optimization
+        tuner="greedy",
+        initial_hps=INITIAL_HPS,
+        hyperparameters=hp,
+        executions_per_trial=EXECUTIONS_PER_TRIAL,
+        distribution_strategy=strategy,
+        objective=kt.Objective("val_auc", direction="max"),  # H2O ranks binary models by AUC
         overwrite=True,
         directory=str(ak_dir),
         project_name="adflush_ak",
         seed=SEED,
-        column_names=feature_columns,
-        column_types=column_types,
     )
 
-    logger.info(
-        f"Running StructuredDataClassifier.fit (max_trials={MAX_TRIALS}, "
-        f"epochs capped at {EPOCHS} per trial, {len(X_train)} rows, "
-        f"all columns forced 'numerical') ..."
-    )
-    X_train_df = pd.DataFrame(X_train, columns=feature_columns)
+    logger.info(f"Running AutoModel.fit (max_trials={MAX_TRIALS}, {len(X_train)} rows) ...")
 
+    # No restore_best_weights: the exported model comes from the final refit.
     early_stopping = tf.keras.callbacks.EarlyStopping(
-        patience=PATIENCE, min_delta=PATIENCE_MIN_DELTA, restore_best_weights=True
+        monitor="val_auc", mode="max", patience=PATIENCE, min_delta=PATIENCE_MIN_DELTA
     )
 
     clf.fit(
-        X_train_df,
+        X_train,
         y_train,
-        epochs=EPOCHS,
         callbacks=[early_stopping],
         batch_size=BATCH_SIZE,
         verbose=2,
@@ -266,6 +315,12 @@ def main():
             f"Rebuilt model diverges from AutoKeras's original export (max diff {max_rebuild_diff}); "
             "the Normalization->Rescaling swap is not equivalent -- aborting before export."
         )
+
+    # Variables created under the MirroredStrategy lose their layer prefix
+    # (tfjs then sees duplicate "gamma" weights), so export a plain copy.
+    plain_model = tf.keras.models.clone_model(tfjs_model)
+    plain_model.set_weights(tfjs_model.get_weights())
+    tfjs_model = plain_model
 
     keras_path = MODELDIR / "AdFlush_autokeras.keras"
     tfjs_model.save(str(keras_path))

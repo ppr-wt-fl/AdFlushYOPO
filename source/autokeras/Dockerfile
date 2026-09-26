@@ -2,8 +2,8 @@
 # Build from the REPO ROOT:
 #   docker build -f source/autokeras/Dockerfile -t adflush-autokeras .
 #
-# Run (dataset/ + runs/ bind-mounted -> each run lands in runs/<timestamp>/ on host)
-#   docker run --rm --gpus all \
+# Run 
+#   docker run --rm --gpus all --shm-size=16g \
 #     -v "$(pwd)/dataset:/adflush/dataset" \
 #     -v "$(pwd)/source/autokeras/runs:/adflush/runs" \
 #     adflush-autokeras
