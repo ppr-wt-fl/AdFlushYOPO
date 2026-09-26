@@ -2,11 +2,10 @@
 # Build from the REPO ROOT:
 #   docker build -f source/autokeras/Dockerfile -t adflush-autokeras .
 #
-# Run (dataset/ + model/ + output/ bind-mounted -> results land on host
+# Run (dataset/ + runs/ bind-mounted -> each run lands in runs/<timestamp>/ on host)
 #   docker run --rm --gpus all \
 #     -v "$(pwd)/dataset:/adflush/dataset" \
-#     -v "$(pwd)/source/autokeras/model:/adflush/model" \
-#     -v "$(pwd)/source/autokeras/output:/adflush/output" \
+#     -v "$(pwd)/source/autokeras/runs:/adflush/runs" \
 #     adflush-autokeras
 # ---------------------------------------------------------------------------
 
@@ -69,7 +68,7 @@ COPY source/tfjs_validate/package.json source/tfjs_validate/validate.js source/t
 
 COPY source/autokeras/train_autokeras.py source/train_autokeras.py
 
-RUN mkdir -p dataset model output
+RUN mkdir -p dataset runs
 
 WORKDIR /adflush/source
 ENTRYPOINT ["python3", "train_autokeras.py"]

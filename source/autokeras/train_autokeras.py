@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -26,8 +27,8 @@ logger = logging.getLogger("train_autokeras")
 SOURCE_DIR = Path(__file__).resolve().parent
 REPO_DIR = SOURCE_DIR.parent
 DATADIR = REPO_DIR / "dataset"
-MODELDIR = REPO_DIR / "model"
-OUTDIR = REPO_DIR / "output"
+RUN_DIR = REPO_DIR / "runs" / time.strftime("%Y-%m-%d_%H-%M-%S")
+MODELDIR = RUN_DIR / "model"
 TFJS_VALIDATE_DIR = SOURCE_DIR / "tfjs_validate"
 
 TRAINSET = DATADIR / "AdFlush_train.csv"
@@ -160,7 +161,28 @@ def run_tfjs_validation(model_json_path, payload_path):
 
 def main():
     MODELDIR.mkdir(parents=True, exist_ok=True)
-    OUTDIR.mkdir(parents=True, exist_ok=True)
+
+    tee = subprocess.Popen(["tee", str(RUN_DIR / "train.log")], stdin=subprocess.PIPE)
+    os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
+    os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
+    logger.info(f"Run directory: {RUN_DIR}")
+
+    with open(RUN_DIR / "config.json", "w") as f:
+        json.dump(
+            {
+                "seed": SEED,
+                "max_trials": MAX_TRIALS,
+                "epochs": EPOCHS,
+                "batch_size": BATCH_SIZE,
+                "patience": PATIENCE,
+                "patience_min_delta": PATIENCE_MIN_DELTA,
+                "validation_sample_size": VALIDATION_SAMPLE_SIZE,
+                "trainset": str(TRAINSET),
+                "testset": str(TESTSET),
+            },
+            f,
+            indent=2,
+        )
 
     logger.info(f"Loading {TRAINSET} / {TESTSET}")
     X_train, y_train, feature_columns = load_dataset(TRAINSET)
@@ -182,7 +204,7 @@ def main():
     # == force everything to be numerical
     column_types = {c: "numerical" for c in feature_columns}
 
-    ak_dir = OUTDIR / "autokeras_search"
+    ak_dir = RUN_DIR / "autokeras_search"
     clf = ak.StructuredDataClassifier(
         max_trials=MAX_TRIALS,
         tuner="bayesian",   # Switches from the default task-specific tuner to Bayesian Optimization
