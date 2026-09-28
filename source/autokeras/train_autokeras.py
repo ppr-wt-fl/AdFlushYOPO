@@ -241,9 +241,7 @@ def main():
         dropout=kt.engine.hyperparameters.Choice("dropout", DROPOUT),
     )(x)
 
-    strategy = tf.distribute.MirroredStrategy()
-    with strategy.scope():
-        auc = tf.keras.metrics.AUC(name="auc")
+    auc = tf.keras.metrics.AUC(name="auc")
     outputs = ak.ClassificationHead(metrics=["accuracy", auc])(x)
 
     # Pre-registered hps override the ones AutoKeras declares with the same name.
@@ -262,7 +260,6 @@ def main():
         initial_hps=INITIAL_HPS,
         hyperparameters=hp,
         executions_per_trial=EXECUTIONS_PER_TRIAL,
-        distribution_strategy=strategy,
         objective=kt.Objective("val_auc", direction="max"),  # H2O ranks binary models by AUC
         overwrite=True,
         directory=str(ak_dir),
@@ -315,12 +312,6 @@ def main():
             f"Rebuilt model diverges from AutoKeras's original export (max diff {max_rebuild_diff}); "
             "the Normalization->Rescaling swap is not equivalent -- aborting before export."
         )
-
-    # Variables created under the MirroredStrategy lose their layer prefix
-    # (tfjs then sees duplicate "gamma" weights), so export a plain copy.
-    plain_model = tf.keras.models.clone_model(tfjs_model)
-    plain_model.set_weights(tfjs_model.get_weights())
-    tfjs_model = plain_model
 
     keras_path = MODELDIR / "AdFlush_autokeras.keras"
     tfjs_model.save(str(keras_path))
