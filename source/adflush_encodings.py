@@ -444,7 +444,7 @@ def extract_JS_Features_shine(file_name, _isHTML, timeout=None, out_name=None):
                                 all_brackets_count = js_clean.count('[') + js_clean.count(']') + js_clean.count('(') + js_clean.count(')')
                                 brackettodot = all_brackets_count / dot_count if dot_count else 0
                                 
-                                reqreg=re.findall(REQSENT, js_clean)
+                                reqreg=re.findall(REQSENT, source_code)
                                 num_requests_sent=len(reqreg) if reqreg else 0
                                 
                                 setstorreg=re.findall(SETSTOR, js_clean)
@@ -531,7 +531,7 @@ def extract_JS_Features_shine(file_name, _isHTML, timeout=None, out_name=None):
                                         all_brackets_count = js_clean.count('[') + js_clean.count(']') + js_clean.count('(') + js_clean.count(')')
                                         this_brackettodot = all_brackets_count / dot_count if dot_count else 0
                                         
-                                        reqreg=re.findall(REQSENT, js_clean)
+                                        reqreg=re.findall(REQSENT, source_code)
                                         this_num_requests_sent=len(reqreg) if reqreg else 0
                                         
                                         setstorreg=re.findall(SETSTOR, js_clean)

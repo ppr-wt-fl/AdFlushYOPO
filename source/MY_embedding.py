@@ -98,7 +98,7 @@ def pipeline(idx, start_row, end_row):
 
         header = next(reader)
         visit_id_idx = header.index("visit_id")
-        new_header = header + ["brackettodot", "num_get_storage", "num_set_storage", "num_get_cookie", "num_requests_sent", "avg_ident", "avg_charperline"] + ['req_url_' + str(i) for i in range(0, 200)] + ['fqdn_' + str(i) for i in range(0, 30)] + ng_list
+        new_header = header + ["brackettodot", "num_get_storage", "num_set_storage", "num_get_cookie", "num_requests_sent_static", "avg_ident", "avg_charperline"] + ['req_url_' + str(i) for i in range(0, 200)] + ['fqdn_' + str(i) for i in range(0, 30)] + ng_list
         writer.writerow(new_header)
 
         for index, row in enumerate(reader):
