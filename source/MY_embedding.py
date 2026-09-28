@@ -10,6 +10,9 @@ from datetime import datetime
 import sys
 csv.field_size_limit(sys.maxsize)
 import signal
+import sqlite3
+import glob
+import plyvel
 
 class TimeoutError(Exception):
     pass
@@ -59,6 +62,29 @@ def set_dictionary_values(csv_file, dictionary):
                 if key in dictionary:
                     dictionary[key] = value
 
+def load_content_hashes(crawl_dir):
+    hashes = {}
+    for db_file in glob.glob(crawl_dir + "crawl-data_*.sqlite"):
+        con = sqlite3.connect(db_file)
+        for visit_id, url, content_hash in con.execute("SELECT visit_id, url, content_hash FROM http_responses WHERE content_hash IS NOT NULL AND content_hash != '<error>'"):
+            hashes[(str(visit_id), url)] = content_hash
+        con.close()
+    return hashes
+
+def dump_scripts(content_dir, content_hashes, save_directory):
+    os.makedirs(save_directory, exist_ok=True)
+    for ldb_file in glob.glob(content_dir + "content_*.ldb"):
+        db = plyvel.DB(ldb_file)
+        for content_hash in content_hashes:
+            path = save_directory + content_hash + ".js"
+            if os.path.exists(path):
+                continue
+            body = db.get(content_hash.encode("ascii"))
+            if body is not None:
+                with open(path, "wb") as file:
+                    file.write(body)
+        db.close()
+
 def pipeline(idx, start_row, end_row):
     save_directory = '/yopo-artifact/AdFlush/source/MY_jsfile/'
     csv_file_path = "/yopo-artifact/WebGraph/result_webgraph_unmod/merged_features_with_labelled_exclude_flow.csv"
@@ -72,6 +98,7 @@ def pipeline(idx, start_row, end_row):
         writer = csv.writer(csv_output)
 
         header = next(reader)
+        visit_id_idx = header.index("visit_id")
         new_header = header + ["brackettodot", "num_get_storage", "num_set_storage", "num_get_cookie", "num_requests_sent", "avg_ident", "avg_charperline"] + ['req_url_' + str(i) for i in range(0, 200)] + ['fqdn_' + str(i) for i in range(0, 30)] + ng_list
         writer.writerow(new_header)
 
@@ -118,10 +145,14 @@ def pipeline(idx, start_row, end_row):
                 if cps == "script":
                     if not os.path.exists(save_directory):
                         os.makedirs(save_directory)
-                    try:
-                        save_js_file(url, save_directory + js_name + ".js")
-                    except Exception as e:
-                        continue
+                    content_hash = content_hashes.get((row[visit_id_idx], url))
+                    if content_hash and os.path.exists(save_directory + content_hash + ".js"):
+                        js_name = content_hash
+                    else:
+                        try:
+                            save_js_file(url, save_directory + js_name + ".js")
+                        except Exception as e:
+                            continue
                     try:
                         ast_depth, ast_breadth, avg_ident, avg_charperline, brackettodot, num_requests_sent, num_set_storage, num_get_storage, num_get_cookie, ngram = extract_JS_Features_shine_with_timeout(file_name=js_name, _isHTML=False, timeout=180)
                     except:
@@ -214,6 +245,13 @@ processes = []
 file_openwpm = "/yopo-artifact/WebGraph/result_webgraph_unmod/merged_features_with_labelled_exclude_flow.csv"
 data_openwpm = pd.read_csv(file_openwpm)
 num_total = len(data_openwpm)
+
+# LevelDB allows one process per DB, so script bodies are dumped here before the workers fork
+content_hashes = load_content_hashes("/yopo-artifact/OpenWPM/datadir_proxy_unmod/crawl_dir/")
+scripts = data_openwpm[data_openwpm.iloc[:, 58] == "script"]
+needed = {content_hashes[key] for key in zip(scripts["visit_id"].astype(str), scripts.iloc[:, 2]) if key in content_hashes}
+print(f"{len(needed)} script bodies found in LevelDB for {len(scripts)} script rows")
+dump_scripts("/yopo-artifact/OpenWPM/datadir_proxy_unmod/content_dir/", needed, '/yopo-artifact/AdFlush/source/MY_jsfile/')
 num_core = 32
 per_core = (num_total + num_core - 1) // num_core
 
