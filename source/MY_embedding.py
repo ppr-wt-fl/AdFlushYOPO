@@ -6,7 +6,6 @@ from multiprocessing import Pool, Process, TimeoutError
 import time
 import csv
 import tldextract
-from datetime import datetime
 import sys
 csv.field_size_limit(sys.maxsize)
 import signal
@@ -105,7 +104,7 @@ def pipeline(idx, start_row, end_row):
         for index, row in enumerate(reader):
             if idx == 0 and index % 10000 == 0:
                 print(f"now processing {str(index)} instances...")
-            if start_row <= index <= end_row:
+            if start_row <= index < end_row:
                 try:
                     cps = row[58]
                     url = row[2]  # Assuming third column contains the URL
@@ -130,8 +129,7 @@ def pipeline(idx, start_row, end_row):
                     print("err3")
                     continue
 
-                current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%03d")
-                js_name = f"{current_time}.js"
+                js_name = f"{idx}_{index}"
 
                 # print(fqdn_emb)
                 # print("---")
@@ -153,8 +151,9 @@ def pipeline(idx, start_row, end_row):
                             save_js_file(url, save_directory + js_name + ".js")
                         except Exception as e:
                             continue
+                    ast_name = f"{idx}_{index}"
                     try:
-                        ast_depth, ast_breadth, avg_ident, avg_charperline, brackettodot, num_requests_sent, num_set_storage, num_get_storage, num_get_cookie, ngram = extract_JS_Features_shine_with_timeout(file_name=js_name, _isHTML=False, timeout=180)
+                        ast_depth, ast_breadth, avg_ident, avg_charperline, brackettodot, num_requests_sent, num_set_storage, num_get_storage, num_get_cookie, ngram = extract_JS_Features_shine_with_timeout(file_name=js_name, _isHTML=False, timeout=180, out_name=ast_name)
                     except:
                         ast_depth = 0
                         ast_breadth = 0

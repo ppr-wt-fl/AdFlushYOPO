@@ -88,11 +88,13 @@ def content_policy_type_encoding(content_policy_type):
         return content_dict[content_policy_type]
     
     
-def makeAST(fname):
-    # read {fname}.js from processing directory, parse AST to .txt in processing directory
+def makeAST(fname, out_name=None):
+    # read {fname}.js from processing directory, parse AST to {out_name}.txt (default {fname}.txt) in processing directory
+    if out_name is None:
+        out_name=fname
     try:
         # print('node ast_parser.js'+' '+'./'+PATHTOPROCESSING+'/'+fname+'.js'+' '+'./'+PATHTOPROCESSING+'/'+fname+'.txt')
-        result=subprocess.check_output('node ast_parser.js'+' '+'./'+PATHTOPROCESSING+'/'+fname+'.js'+' '+'./'+PATHTOPROCESSING+'/'+fname+'.txt', shell=True)
+        result=subprocess.check_output('node ast_parser.js'+' '+'./'+PATHTOPROCESSING+'/'+fname+'.js'+' '+'./'+PATHTOPROCESSING+'/'+out_name+'.txt', shell=True)
         result=result.decode('UTF8').split()[0]
         if result=='OKAY':
             return 1
@@ -352,7 +354,7 @@ def extract_JS_Features(file_name, _isHTML):
                 logging.error("BS PARSE ERROR: "+file_name+" "+str(err))
 
 # shine
-def extract_JS_Features_shine_with_timeout(file_name, _isHTML, timeout):
+def extract_JS_Features_shine_with_timeout(file_name, _isHTML, timeout, out_name=None):
     """
     Wrapper to run the feature extraction with a timeout.
     """
@@ -360,7 +362,7 @@ def extract_JS_Features_shine_with_timeout(file_name, _isHTML, timeout):
         result_list = manager.list()
         process = Process(
             target=lambda: result_list.extend(
-                extract_JS_Features_shine(file_name, _isHTML)
+                extract_JS_Features_shine(file_name, _isHTML, out_name=out_name)
             )
         )
         process.start()
@@ -374,8 +376,9 @@ def extract_JS_Features_shine_with_timeout(file_name, _isHTML, timeout):
 
         return tuple(result_list)
 
-def extract_JS_Features_shine(file_name, _isHTML, timeout=None):
+def extract_JS_Features_shine(file_name, _isHTML, timeout=None, out_name=None):
     # Input: source_code= File name(without extension) of javascript or HTML source code to extract JavaScript features
+    # out_name: name (without extension) of the AST .txt for the JS branch, defaults to file_name
     # Example of source code is the content of /processing/sample.js
     # Output: Extracted JavaScript features as below
     try:
@@ -400,9 +403,11 @@ def extract_JS_Features_shine(file_name, _isHTML, timeout=None):
             with open(PATHTOPROCESSING+'/'+file_name+'.js','r',encoding='UTF8') as readf:
                 try:
                     source_code=readf.read()
-                    astresult=makeAST(file_name)
+                    if out_name is None:
+                        out_name=file_name
+                    astresult=makeAST(file_name, out_name)
                     if astresult==1:
-                        with open(PATHTOPROCESSING+'/'+file_name+'.txt','r', encoding="UTF8") as astf:
+                        with open(PATHTOPROCESSING+'/'+out_name+'.txt','r', encoding="UTF8") as astf:
                             parseresult=json.loads(astf.read())
                             ast=parseresult['ast']
                             gram_source=treewalk(ast)
