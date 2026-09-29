@@ -428,9 +428,8 @@ def extract_JS_Features_shine(file_name, _isHTML, timeout=None, out_name=None):
                                     logging.error("NGRAM TOO SHORT: "+str(file_name))
                                     
                                 ast_depth, ast_breadth, ident_len, ident_count=treewalk_featext(ast)
+                                # no inverse: the published dataset and the paper use the raw average length
                                 avg_ident=ident_len/ident_count if ident_count>0 else 0
-                                if avg_ident!=0:
-                                    avg_ident=1/avg_ident       ## Use multiplicative inverse to make value linear with 0 (unexisting values)
                                 
                                 avg_charperline=sum(len(line) for line in source_code.split('\n')) / (len(source_code.split('\n')) or 1)
                                 
@@ -515,9 +514,8 @@ def extract_JS_Features_shine(file_name, _isHTML, timeout=None, out_name=None):
                                             logging.error("NGRAM TOO SHORT: "+str(jsfile_name))
                                             
                                         this_ast_depth, this_ast_breadth, this_ident_len, this_ident_count=treewalk_featext(ast)
+                                        # no inverse: the published dataset and the paper use the raw average length
                                         this_avg_ident=this_ident_len/this_ident_count if this_ident_count>0 else 0
-                                        if this_avg_ident!=0:
-                                            this_avg_ident=1/this_avg_ident       ## Use multiplicative inverse to make value linear with 0 (unexisting values)
                                         
                                         this_avg_charperline=sum(len(line) for line in source_code.split('\n')) / (len(source_code.split('\n')) or 1)
                                         

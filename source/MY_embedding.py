@@ -12,6 +12,7 @@ import signal
 import sqlite3
 import glob
 import plyvel
+import shutil
 
 class TimeoutError(Exception):
     pass
@@ -109,7 +110,7 @@ def pipeline(idx, start_row, end_row):
                     cps = row[58]
                     url = row[2]  # Assuming third column contains the URL
                     top_domain = row[0]
-                    fqdn = extract_fqdn(top_domain)
+                    fqdn = extract_fqdn(url)
                     # print(cps, url, top_domain, fqdn)
                 except Exception as err:
                     print(err)
@@ -140,20 +141,25 @@ def pipeline(idx, start_row, end_row):
                 # js_name = url.split("/")[-1]
                 # js_name = js_name.split(",")[-1]
 
-                if cps == "script":
+                if cps == "script" or cps == "sub_frame" or cps == "main_frame":
+                    is_html = cps != "script"
                     if not os.path.exists(save_directory):
                         os.makedirs(save_directory)
                     content_hash = content_hashes.get((row[visit_id_idx], url))
-                    if content_hash and os.path.exists(save_directory + content_hash + ".js"):
+                    if not is_html and content_hash and os.path.exists(save_directory + content_hash + ".js"):
                         js_name = content_hash
+                    elif cps == "main_frame" and top_domain in main_frame_html:
+                        # same HTML save_html.sh stored and the crawl replayed through mitmproxy
+                        shutil.copy(main_frame_html[top_domain], save_directory + js_name + ".html")
                     else:
+                        # OpenWPM only saves script bodies (save_content="script"), so frames are always re-downloaded
                         try:
-                            save_js_file(url, save_directory + js_name + ".js")
+                            save_js_file(url, save_directory + js_name + (".html" if is_html else ".js"))
                         except Exception as e:
                             continue
                     ast_name = f"{idx}_{index}"
                     try:
-                        ast_depth, ast_breadth, avg_ident, avg_charperline, brackettodot, num_requests_sent, num_set_storage, num_get_storage, num_get_cookie, ngram = extract_JS_Features_shine_with_timeout(file_name=js_name, _isHTML=False, timeout=180, out_name=ast_name)
+                        ast_depth, ast_breadth, avg_ident, avg_charperline, brackettodot, num_requests_sent, num_set_storage, num_get_storage, num_get_cookie, ngram = extract_JS_Features_shine_with_timeout(file_name=js_name, _isHTML=is_html, timeout=180, out_name=ast_name)
                     except:
                         ast_depth = 0
                         ast_breadth = 0
@@ -244,6 +250,11 @@ processes = []
 file_openwpm = "/yopo-artifact/WebGraph/result_webgraph_unmod/merged_features_with_labelled_exclude_flow.csv"
 data_openwpm = pd.read_csv(file_openwpm)
 num_total = len(data_openwpm)
+
+main_frame_html = {}
+with open("/yopo-artifact/data/rendering_stream/final_url_to_html_filepath_mapping.csv") as f:
+    for mapping_row in csv.reader(f):
+        main_frame_html[mapping_row[0]] = mapping_row[-1]
 
 # LevelDB allows one process per DB, so script bodies are dumped here before the workers fork
 content_hashes = load_content_hashes("/yopo-artifact/OpenWPM/datadir_proxy_unmod/crawl_dir/")
