@@ -150,7 +150,10 @@ def pipeline(idx, start_row, end_row):
                         js_name = content_hash
                     elif cps == "main_frame" and top_domain in main_frame_html:
                         # same HTML save_html.sh stored and the crawl replayed through mitmproxy
-                        shutil.copy(main_frame_html[top_domain], save_directory + js_name + ".html")
+                        try:
+                            shutil.copy(main_frame_html[top_domain], save_directory + js_name + ".html")
+                        except Exception as e:
+                            continue
                     else:
                         # OpenWPM only saves script bodies (save_content="script"), so frames are always re-downloaded
                         try:
