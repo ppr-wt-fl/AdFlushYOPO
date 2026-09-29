@@ -85,6 +85,13 @@ def dump_scripts(content_dir, content_hashes, save_directory):
                     file.write(body)
         db.close()
 
+def remove_temp_files(save_directory, name):
+    for path in glob.glob(save_directory + name + ".*") + glob.glob(save_directory + name + "_*"):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
 def pipeline(idx, start_row, end_row):
     save_directory = '/yopo-artifact/AdFlush/source/MY_jsfile/'
     csv_file_path = "/yopo-artifact/WebGraph/result_webgraph_unmod/merged_features_with_labelled_exclude_flow.csv"
@@ -190,6 +197,8 @@ def pipeline(idx, start_row, end_row):
 
                         writer.writerow(row)
                         continue
+                    finally:
+                        remove_temp_files(save_directory, ast_name)
 
                     # print("\nNew features for processing/now.js\n\t", "ast_depth: ",ast_depth, "ast_breadth: ",ast_breadth, "avg_ident: ",avg_ident," avg_charperline: ", avg_charperline, "brackettodot: ",brackettodot, "num_requests_sent: ",num_requests_sent, "num_set_storage: ",num_set_storage, "num_get_storage: ",num_get_storage, "num_get_cookie: ",num_get_cookie, "ngram: ",ngram)
 
