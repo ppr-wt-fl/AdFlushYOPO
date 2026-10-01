@@ -49,12 +49,12 @@ TESTSET = DATADIR / "AdFlush_test.csv"
 SEED = 42
 VALIDATION_SAMPLE_SIZE = 1024
 
-MAX_TRIALS = 400
+MAX_TRIALS = 300
 # Train each trial twice and average: the same config's score varies by ~0.004
 # from weight init alone, enough to decide which config "wins".
-EXECUTIONS_PER_TRIAL = 2
-BATCH_SIZE=1024
-# Search space. Worst case is 32 x 4096-unit layers + BatchNorm ~= 521M params (~2.1 GB).
+EXECUTIONS_PER_TRIAL = 1
+BATCH_SIZE=8192
+# Search space. Worst case is 32 x 4096-unit layers ~= 521M params (~2.1 GB).
 # Capped here instead of with max_model_size: an oversized model counts as a
 # failed trial, and 3 failures in a row abort the whole search.
 MAX_LAYERS = 32
@@ -62,10 +62,8 @@ UNITS = [16, 32, 64, 128, 256, 512, 1024, 2048, 4096]
 DROPOUT = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5]
 LEARNING_RATES = [1e-2, 1e-3, 1e-4]
 # First trials of the greedy search: the best config of the earlier
-# StructuredDataClassifier run, plus a deeper one (greedy rarely changes depth).
 INITIAL_HPS = [
     {
-        "dense_block_1/use_batchnorm": True,
         "dense_block_1/num_layers": 3,
         "dense_block_1/units_0": 128,
         "dense_block_1/units_1": 1024,
@@ -76,7 +74,6 @@ INITIAL_HPS = [
         "learning_rate": 1e-3,
     },
     {
-        "dense_block_1/use_batchnorm": True,
         "dense_block_1/num_layers": 6,
         **{f"dense_block_1/units_{i}": 256 for i in range(6)},
         "dense_block_1/dropout": 0.0,
@@ -86,7 +83,7 @@ INITIAL_HPS = [
     },
 ]
 # how long to wait before early stopping (no improvement on validation AUC)
-PATIENCE=20
+PATIENCE=10
 PATIENCE_MIN_DELTA=1e-4
 
 
@@ -249,6 +246,7 @@ def main():
     x = ak.DenseBlock(
         num_layers=kt.engine.hyperparameters.Int("num_layers", 1, MAX_LAYERS),
         num_units=kt.engine.hyperparameters.Choice("num_units", UNITS),
+        use_batchnorm=False,
         dropout=kt.engine.hyperparameters.Choice("dropout", DROPOUT),
     )(x)
 
