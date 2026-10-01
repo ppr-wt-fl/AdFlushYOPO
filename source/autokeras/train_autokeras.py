@@ -28,7 +28,18 @@ logger = logging.getLogger("train_autokeras")
 SOURCE_DIR = Path(__file__).resolve().parent
 REPO_DIR = SOURCE_DIR.parent
 DATADIR = REPO_DIR / "dataset"
-RUN_DIR = REPO_DIR / "runs" / time.strftime("%Y-%m-%d_%H-%M-%S")
+# Set RESUME_RUN=<run folder name> to continue an interrupted search instead of starting a new one.
+RESUME_RUN = os.environ.get("RESUME_RUN")
+
+if RESUME_RUN: 
+    resume_dir = REPO_DIR / "runs" / RESUME_RUN
+    if resume_dir.exists():
+        logger.info(f"Resuming AutoKeras search from {resume_dir}")
+    else:
+        raise RuntimeError(f"RESUME_RUN={RESUME_RUN} but {resume_dir} does not exist; cannot resume.")
+
+RUN_DIR = REPO_DIR / "runs" / (RESUME_RUN or time.strftime("%Y-%m-%d_%H-%M-%S"))
+
 MODELDIR = RUN_DIR / "model"
 TFJS_VALIDATE_DIR = SOURCE_DIR / "tfjs_validate"
 
@@ -193,7 +204,7 @@ def run_tfjs_validation(model_json_path, payload_path):
 def main():
     MODELDIR.mkdir(parents=True, exist_ok=True)
 
-    tee = subprocess.Popen(["tee", str(RUN_DIR / "train.log")], stdin=subprocess.PIPE)
+    tee = subprocess.Popen(["tee", "-a", str(RUN_DIR / "train.log")], stdin=subprocess.PIPE)
     os.dup2(tee.stdin.fileno(), sys.stdout.fileno())
     os.dup2(tee.stdin.fileno(), sys.stderr.fileno())
     logger.info(f"Run directory: {RUN_DIR}")
@@ -261,7 +272,7 @@ def main():
         hyperparameters=hp,
         executions_per_trial=EXECUTIONS_PER_TRIAL,
         objective=kt.Objective("val_auc", direction="max"),  # H2O ranks binary models by AUC
-        overwrite=True,
+        overwrite=not RESUME_RUN,
         directory=str(ak_dir),
         project_name="adflush_ak",
         seed=SEED,
