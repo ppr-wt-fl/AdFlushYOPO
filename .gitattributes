@@ -1,9 +1,9 @@
-dataset/AdFlush_train.csv filter=lfs diff=lfs merge=lfs -text
-dataset/all_df_883_test.csv filter=lfs diff=lfs merge=lfs -text
-dataset/all_df_883_train.csv filter=lfs diff=lfs merge=lfs -text
 *.pt !text !filter !merge !diff
 *.csv !text !filter !merge !diff
 *.pkl !text !filter !merge !diff
+dataset/AdFlush_train.csv filter=lfs diff=lfs merge=lfs -text
+dataset/all_df_883_test.csv filter=lfs diff=lfs merge=lfs -text
+dataset/all_df_883_train.csv filter=lfs diff=lfs merge=lfs -text
 source/autokeras/model/ filter=lfs diff=lfs merge=lfs -text
 source/autokeras/output/ filter=lfs diff=lfs merge=lfs -text
 source/autokeras/runs/*/autokeras_search/** filter=lfs diff=lfs merge=lfs -text
